@@ -1,4 +1,1 @@
-html, body, #root { height: 100%; margin: 0; }
-#root { overflow: hidden; }           /* Map tam ekran; scroll tekeri map'e gitsin */
-.leaflet-container { height: 100vh; width: 100vw; }
-.app, .map-wrapper { height: 100%; }  /* varsa üst sarmalayıcılar tam yükseklik */
+/* Base styles - handled in App.css */

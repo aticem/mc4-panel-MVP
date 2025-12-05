@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html>
+<head><title>Console Check</title></head>
+<body>
+<script>
+console.log('Testing wheel event...');
+document.addEventListener('wheel', (e) => {
+  console.log('Wheel event detected:', e.deltaY);
+}, { passive: false });
+</script>
+<div style="width: 500px; height: 500px; background: lightblue;">
+Scroll here to test
+</div>
+</body>
+</html>
