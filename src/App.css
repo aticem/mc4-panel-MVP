@@ -100,7 +100,7 @@ html, body, #root {
   background: #ffffff;
   color: #1c1f26;
   font-size: 18px;
-  cursor: pointer;
+  cursor: default;
   transition: background 0.15s, border-color 0.15s;
   display: flex;
   align-items: center;
@@ -114,7 +114,7 @@ html, body, #root {
 
 .tool-btn:disabled {
   opacity: 0.35;
-  cursor: not-allowed;
+  cursor: default;
 }
 
 .tool-btn.active {
@@ -135,15 +135,15 @@ html, body, #root {
 .map-svg {
   width: 100%;
   height: 100%;
-  cursor: crosshair;
+  cursor: default;
 }
 
 .map-svg.panning {
-  cursor: grabbing;
+  cursor: default;
 }
 
 .map-svg.adding-note {
-  cursor: crosshair;
+  cursor: default;
 }
 
 /* Panel Styles */
@@ -168,13 +168,22 @@ html, body, #root {
   background: #e74c3c;
   border-radius: 50%;
   transform: translate(-50%, -50%);
-  cursor: pointer;
+  cursor: default;
   box-shadow: 0 2px 6px rgba(0,0,0,0.3);
   z-index: 50;
 }
 
-.note-marker:hover {
-  transform: translate(-50%, -50%) scale(1.2);
+.note-marker.selected {
+  background: #9b59b6;
+  border: 3px solid #8e44ad;
+  transform: translate(-50%, -50%) scale(1.4);
+  box-shadow: 0 0 12px rgba(155, 89, 182, 0.8);
+  animation: pulse-note 0.6s ease-in-out infinite alternate;
+}
+
+@keyframes pulse-note {
+  from { box-shadow: 0 0 8px rgba(155, 89, 182, 0.6); }
+  to { box-shadow: 0 0 16px rgba(155, 89, 182, 1); }
 }
 
 .note-marker::after {
@@ -253,7 +262,18 @@ html, body, #root {
   filter: brightness(1.1);
 }
 
-/* Status Bar */
+/* Note Mode Bar - below header */
+.note-mode-bar {
+  background: rgba(155, 89, 182, 0.95);
+  color: white;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: center;
+  z-index: 99;
+}
+
+/* Status Bar (legacy) */
 .status-bar {
   position: absolute;
   bottom: 60px;

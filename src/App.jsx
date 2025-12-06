@@ -1,23 +1,57 @@
 import React, { useState, useEffect, useCallback, useRef, memo } from 'react';
 import './App.css';
 
-// Panel durumları: null (yok), 'mc4' (mavi - install), 'terminated' (yeşil - string terminated)
+// Panel states: null (none), 'mc4' (blue - installed), 'terminated' (green - string terminated)
 const PANEL_STATES = {
   NONE: null,
   MC4_INSTALLED: 'mc4',
   TERMINATED: 'terminated'
 };
 
-// Not bileşeni
-function Note({ note, onUpdate, onDelete, scale }) {
-  const [isEditing, setIsEditing] = useState(false);
+// SVG Note Marker component - renders inside SVG
+function SvgNoteMarker({ note, isSelected, viewBoxWidth, onClick }) {
+  const radius = Math.max(3, viewBoxWidth / 300);
+  const innerRadius = radius * 0.4;
+  
+  return (
+    <g 
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick(note);
+      }}
+      style={{ cursor: 'pointer' }}
+    >
+      <circle
+        cx={note.svgX}
+        cy={note.svgY}
+        r={isSelected ? radius * 1.4 : radius}
+        fill={isSelected ? '#9b59b6' : '#e74c3c'}
+        stroke={isSelected ? '#8e44ad' : '#c0392b'}
+        strokeWidth={isSelected ? radius * 0.3 : radius * 0.15}
+        style={{
+          filter: isSelected ? 'drop-shadow(0 0 4px rgba(155, 89, 182, 0.8))' : 'drop-shadow(0 1px 2px rgba(0,0,0,0.3))'
+        }}
+      />
+      <circle
+        cx={note.svgX}
+        cy={note.svgY}
+        r={innerRadius}
+        fill="white"
+        pointerEvents="none"
+      />
+    </g>
+  );
+}
+
+// Note Editor component - HTML overlay for editing
+function NoteEditor({ note, onUpdate, onDelete, onClose, screenX, screenY }) {
   const [text, setText] = useState(note.text);
 
   const handleSave = () => {
     if (text.trim()) {
       onUpdate(note.id, text);
     }
-    setIsEditing(false);
+    onClose();
   };
 
   const handleKeyDown = (e) => {
@@ -27,54 +61,37 @@ function Note({ note, onUpdate, onDelete, scale }) {
     }
     if (e.key === 'Escape') {
       setText(note.text);
-      setIsEditing(false);
+      onClose();
     }
   };
 
-  if (isEditing) {
-    return (
-      <div 
-        className="note-editor"
-        style={{ 
-          left: note.screenX, 
-          top: note.screenY,
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <textarea
-          autoFocus
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Write a note..."
-        />
-        <div className="note-actions">
-          <button onClick={handleSave}>✓</button>
-          <button onClick={() => onDelete(note.id)}>🗑</button>
-          <button onClick={() => { setText(note.text); setIsEditing(false); }}>✕</button>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div
-      className="note-marker"
+    <div 
+      className="note-editor"
       style={{ 
-        left: note.screenX, 
-        top: note.screenY,
+        left: screenX, 
+        top: screenY,
       }}
-      onClick={(e) => {
-        e.stopPropagation();
-        setIsEditing(true);
-      }}
-      title={note.text}
-    />
+      onClick={(e) => e.stopPropagation()}
+    >
+      <textarea
+        autoFocus
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={handleKeyDown}
+        placeholder="Write a note..."
+      />
+      <div className="note-actions">
+        <button onClick={handleSave}>✓</button>
+        <button onClick={() => onDelete(note.id)}>🗑</button>
+        <button onClick={() => { setText(note.text); onClose(); }}>✕</button>
+      </div>
+    </div>
   );
 }
 
 // Optimized Panel Component with Half-Split Click Areas
-const Panel = memo(({ feature, index, state, toSvgCoords, onClick }) => {
+const Panel = memo(({ feature, index, state, toSvgCoords }) => {
   const coords = feature.geometry.coordinates;
   if (!coords || coords.length < 2) return null;
   
@@ -134,26 +151,6 @@ const Panel = memo(({ feature, index, state, toSvgCoords, onClick }) => {
 
   const currentState = state || {};
   
-  // Main click handler that determines side based on click position
-  const handleClick = (e) => {
-    e.stopPropagation();
-    
-    const svg = e.target.ownerSVGElement;
-    if (!svg) return;
-    
-    let point = svg.createSVGPoint();
-    point.x = e.clientX;
-    point.y = e.clientY;
-    
-    const svgPoint = point.matrixTransform(svg.getScreenCTM().inverse());
-    
-    const distLeft = Math.hypot(svgPoint.x - leftEdge.center.x, svgPoint.y - leftEdge.center.y);
-    const distRight = Math.hypot(svgPoint.x - rightEdge.center.x, svgPoint.y - rightEdge.center.y);
-    
-    const side = distLeft < distRight ? 'left' : 'right';
-    onClick(e, index, side);
-  };
-  
   return (
     <g className="panel-group">
       {/* Main panel shape */}
@@ -162,8 +159,8 @@ const Panel = memo(({ feature, index, state, toSvgCoords, onClick }) => {
         fill="rgba(0,0,0,0.03)"
         stroke="#222"
         strokeWidth={0.15}
-        onClick={handleClick}
-        style={{ cursor: 'pointer' }} 
+        style={{ cursor: 'default' }}
+        data-panel-index={index}
       />
       
       {/* Left Indicator */}
@@ -172,10 +169,10 @@ const Panel = memo(({ feature, index, state, toSvgCoords, onClick }) => {
           cx={leftPos.x}
           cy={leftPos.y}
           r={endRadius}
-          fill={currentState.left === PANEL_STATES.MC4_INSTALLED ? '#3498db' : '#2ecc71'}
-          stroke={currentState.left === PANEL_STATES.MC4_INSTALLED ? '#2980b9' : '#27ae60'}
+          fill={currentState.left === PANEL_STATES.MC4_INSTALLED ? '#0066cc' : '#00aa00'}
+          stroke={currentState.left === PANEL_STATES.MC4_INSTALLED ? '#004499' : '#007700'}
           strokeWidth={0.15}
-          opacity={0.9}
+          opacity={0.95}
           pointerEvents="none"
         />
       )}
@@ -186,10 +183,10 @@ const Panel = memo(({ feature, index, state, toSvgCoords, onClick }) => {
           cx={rightPos.x}
           cy={rightPos.y}
           r={endRadius}
-          fill={currentState.right === PANEL_STATES.MC4_INSTALLED ? '#3498db' : '#2ecc71'}
-          stroke={currentState.right === PANEL_STATES.MC4_INSTALLED ? '#2980b9' : '#27ae60'}
+          fill={currentState.right === PANEL_STATES.MC4_INSTALLED ? '#0066cc' : '#00aa00'}
+          stroke={currentState.right === PANEL_STATES.MC4_INSTALLED ? '#004499' : '#007700'}
           strokeWidth={0.15}
-          opacity={0.9}
+          opacity={0.95}
           pointerEvents="none"
         />
       )}
@@ -238,13 +235,13 @@ export default function App() {
   const [history, setHistory] = useState([{}]);
   const [historyIndex, setHistoryIndex] = useState(0);
   
-  // Notlar
+  // Notes
   const [notes, setNotes] = useState([]);
   const [isAddingNote, setIsAddingNote] = useState(false);
   
-  // Harita durumu
+  // Map state
   const [viewBox, setViewBox] = useState({ x: 0, y: 0, width: 1000, height: 800 });
-  // Sabit çizim alanı (geometry koordinatları bu alana projeksiyonlanır, zoom/pan sadece viewBox üzerinde)
+  // Fixed drawing area (geometry coordinates are projected to this area, zoom/pan only affects viewBox)
   const [canvasSize, setCanvasSize] = useState({ width: 1000, height: 800 });
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
@@ -253,7 +250,15 @@ export default function App() {
   const [isSelecting, setIsSelecting] = useState(false);
   const [selectionStart, setSelectionStart] = useState(null);
   const [selectionEnd, setSelectionEnd] = useState(null);
-  const [selectionCount, setSelectionCount] = useState(0);
+  const [isUnselectMode, setIsUnselectMode] = useState(false); // Right-click = unselect
+  const [clickedElement, setClickedElement] = useState(null); // Track clicked element for panel clicks
+  
+  // Note selection state (when in note mode)
+  const [isNoteSelecting, setIsNoteSelecting] = useState(false);
+  const [noteSelectionStart, setNoteSelectionStart] = useState(null);
+  const [noteSelectionEnd, setNoteSelectionEnd] = useState(null);
+  const [selectedNotes, setSelectedNotes] = useState(new Set()); // IDs of selected notes
+  const [editingNote, setEditingNote] = useState(null); // Note being edited
   
   // SVG ref
   const svgRef = useRef(null);
@@ -335,6 +340,8 @@ export default function App() {
   }, [canvasSize.width, canvasSize.height]);
 
   // Compute counters
+  // MC4: Counts both MC4_INSTALLED and TERMINATED (because terminated means MC4 was done first)
+  // Termination: Only counts TERMINATED
   const counts = useCallback(() => {
     const totalPanels = panelsData ? panelsData.features.length : 0;
     const totalEnds = totalPanels * 2; // Her panelin 2 ucu var
@@ -343,9 +350,12 @@ export default function App() {
     let terminatedCompleted = 0;
     
     Object.values(panelStates).forEach(state => {
-      if (state.left === PANEL_STATES.MC4_INSTALLED) mc4Completed++;
+      // MC4: Count if MC4_INSTALLED OR TERMINATED (terminated implies MC4 was done)
+      if (state.left === PANEL_STATES.MC4_INSTALLED || state.left === PANEL_STATES.TERMINATED) mc4Completed++;
+      if (state.right === PANEL_STATES.MC4_INSTALLED || state.right === PANEL_STATES.TERMINATED) mc4Completed++;
+      
+      // Terminated: Only count TERMINATED
       if (state.left === PANEL_STATES.TERMINATED) terminatedCompleted++;
-      if (state.right === PANEL_STATES.MC4_INSTALLED) mc4Completed++;
       if (state.right === PANEL_STATES.TERMINATED) terminatedCompleted++;
     });
     
@@ -355,17 +365,25 @@ export default function App() {
     };
   }, [panelsData, panelStates]);
 
-  // Get SVG coordinates from mouse event (MOVED UP to be available for handlers)
+  // Get SVG coordinates from mouse event - using SVG's built-in coordinate transformation
   const getSvgCoordsFromEvent = useCallback((e) => {
     const svg = svgRef.current;
     if (!svg) return null;
-    const rect = svg.getBoundingClientRect();
-    const x = viewBox.x + ((e.clientX - rect.left) / rect.width) * viewBox.width;
-    const y = viewBox.y + ((e.clientY - rect.top) / rect.height) * viewBox.height;
-    return { x, y };
-  }, [viewBox]);
+    
+    // Use SVG's native coordinate transformation for accuracy
+    let point = svg.createSVGPoint();
+    point.x = e.clientX;
+    point.y = e.clientY;
+    
+    // Transform screen coordinates to SVG coordinates
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return null;
+    
+    const svgPoint = point.matrixTransform(ctm.inverse());
+    return { x: svgPoint.x, y: svgPoint.y };
+  }, []);
 
-  // Convert canvas coordinates to screen coordinates (MOVED UP)
+  // Convert canvas coordinates to screen coordinates
   const canvasToScreen = useCallback((canvasX, canvasY) => {
     const svg = svgRef.current;
     if (!svg) return { x: 0, y: 0 };
@@ -375,65 +393,193 @@ export default function App() {
     return { x: screenX, y: screenY };
   }, [viewBox]);
 
-  // Check if a panel is inside the selection box
+  // Calculate panel ends (left and right edge centers) for a panel
+  const getPanelEnds = useCallback((panelIndex) => {
+    if (!panelsData) return null;
+    const panel = panelsData.features[panelIndex];
+    if (!panel) return null;
+    
+    const coords = panel.geometry.coordinates;
+    const uniqueCoords = (coords.length > 0 && 
+      Math.abs(coords[0][0] - coords[coords.length-1][0]) < 1e-9 && 
+      Math.abs(coords[0][1] - coords[coords.length-1][1]) < 1e-9)
+        ? coords.slice(0, -1) 
+        : coords;
+    
+    const svgPts = uniqueCoords.map(c => toSvgCoords(c[0], c[1]));
+    
+    // Find the 2 shortest edges (panel ends)
+    const edges = [];
+    for (let i = 0; i < svgPts.length; i++) {
+      const p1 = svgPts[i];
+      const p2 = svgPts[(i + 1) % svgPts.length];
+      const len = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+      edges.push({ p1, p2, len, center: { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 } });
+    }
+    
+    edges.sort((a, b) => a.len - b.len);
+    const shortEdges = edges.slice(0, 2);
+    shortEdges.sort((a, b) => (a.center.x - b.center.x) || (a.center.y - b.center.y));
+    
+    // Calculate panel center
+    const center = {
+      x: svgPts.reduce((sum, p) => sum + p.x, 0) / svgPts.length,
+      y: svgPts.reduce((sum, p) => sum + p.y, 0) / svgPts.length
+    };
+    
+    return {
+      left: shortEdges[0]?.center || center,
+      right: shortEdges[1]?.center || center,
+      center,
+      allPoints: svgPts
+    };
+  }, [panelsData, toSvgCoords]);
+
+  // Check if a point is inside the selection box
+  const isPointInBox = useCallback((point, minX, maxX, minY, maxY) => {
+    return point.x >= minX && point.x <= maxX && point.y >= minY && point.y <= maxY;
+  }, []);
+
+  // Segment intersection (axis-agnostic) using orientation test
+  const segmentsIntersect = useCallback((p1, p2, q1, q2) => {
+    const eps = 1e-6;
+    const orient = (a, b, c) => (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y);
+    const onSegment = (a, b, c) =>
+      Math.min(a.x, b.x) - eps <= c.x && c.x <= Math.max(a.x, b.x) + eps &&
+      Math.min(a.y, b.y) - eps <= c.y && c.y <= Math.max(a.y, b.y) + eps;
+
+    const o1 = orient(p1, p2, q1);
+    const o2 = orient(p1, p2, q2);
+    const o3 = orient(q1, q2, p1);
+    const o4 = orient(q1, q2, p2);
+
+    if (Math.abs(o1) < eps && onSegment(p1, p2, q1)) return true;
+    if (Math.abs(o2) < eps && onSegment(p1, p2, q2)) return true;
+    if (Math.abs(o3) < eps && onSegment(q1, q2, p1)) return true;
+    if (Math.abs(o4) < eps && onSegment(q1, q2, p2)) return true;
+
+    return (o1 > 0) !== (o2 > 0) && (o3 > 0) !== (o4 > 0);
+  }, []);
+
+  // Point in polygon (ray casting) for rectangle->polygon containment checks
+  const isPointInPolygon = useCallback((point, poly) => {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const xi = poly[i].x, yi = poly[i].y;
+      const xj = poly[j].x, yj = poly[j].y;
+      const intersect = ((yi > point.y) !== (yj > point.y)) &&
+        (point.x < (xj - xi) * (point.y - yi) / (yj - yi + 1e-9) + xi);
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }, []);
+
+  // Robust panel vs selection-box intersection (independent of zoom)
   const isPanelInSelection = useCallback((panelIndex, selStart, selEnd) => {
     if (!panelsData || !selStart || !selEnd) return false;
-    const panel = panelsData.features[panelIndex];
-    if (!panel) return false;
-    
-    // Get bounding box of selection
+    const ends = getPanelEnds(panelIndex);
+    if (!ends || !ends.allPoints || ends.allPoints.length === 0) return false;
+
+    // Selection rectangle corners (axis-aligned)
     const minX = Math.min(selStart.x, selEnd.x);
     const maxX = Math.max(selStart.x, selEnd.x);
     const minY = Math.min(selStart.y, selEnd.y);
     const maxY = Math.max(selStart.y, selEnd.y);
-    
-    // Get panel center
-    const coords = panel.geometry.coordinates;
-    const svgCoords = coords.map(c => toSvgCoords(c[0], c[1]));
-    const centerX = svgCoords.reduce((sum, c) => sum + c.x, 0) / svgCoords.length;
-    const centerY = svgCoords.reduce((sum, c) => sum + c.y, 0) / svgCoords.length;
-    
-    // Simple Bounding Box check first (fastest)
-    return centerX >= minX && centerX <= maxX && centerY >= minY && centerY <= maxY;
-  }, [panelsData, toSvgCoords]);
+    const rectCorners = [
+      { x: minX, y: minY },
+      { x: maxX, y: minY },
+      { x: maxX, y: maxY },
+      { x: minX, y: maxY }
+    ];
+
+    // 1) Any panel vertex inside rectangle?
+    if (ends.allPoints.some(p => isPointInBox(p, minX, maxX, minY, maxY))) return true;
+
+    // 2) Any rectangle corner inside panel polygon?
+    if (rectCorners.some(corner => isPointInPolygon(corner, ends.allPoints))) return true;
+
+    // 3) Any edge intersect?
+    const rectEdges = [
+      [rectCorners[0], rectCorners[1]],
+      [rectCorners[1], rectCorners[2]],
+      [rectCorners[2], rectCorners[3]],
+      [rectCorners[3], rectCorners[0]]
+    ];
+    for (let i = 0; i < ends.allPoints.length; i++) {
+      const a = ends.allPoints[i];
+      const b = ends.allPoints[(i + 1) % ends.allPoints.length];
+      for (const [r1, r2] of rectEdges) {
+        if (segmentsIntersect(a, b, r1, r2)) return true;
+      }
+    }
+
+    return false;
+  }, [panelsData, getPanelEnds, isPointInBox, isPointInPolygon, segmentsIntersect]);
 
   // Apply selection to panels
-  const applySelection = useCallback((selStart, selEnd) => {
+  // Left-click: NONE → MC4 → TERMINATED (no going back to NONE)
+  // Right-click: Unselect (set to NONE)
+  const applySelection = useCallback((selStart, selEnd, unselect = false) => {
     if (!panelsData || !selStart || !selEnd) return;
     
-    const selectedIndices = [];
-    panelsData.features.forEach((_, index) => {
-      if (isPanelInSelection(index, selStart, selEnd)) {
-        selectedIndices.push(index);
-      }
-    });
+    // Minimum selection box size check
+    const dx = Math.abs(selEnd.x - selStart.x);
+    const dy = Math.abs(selEnd.y - selStart.y);
+    if (dx < 0.05 && dy < 0.05) return;
     
-    if (selectedIndices.length === 0) return;
-    
-    const newCount = selectionCount + 1;
-    const newState = newCount % 2 === 1 ? PANEL_STATES.MC4_INSTALLED : PANEL_STATES.TERMINATED;
-    const shouldClear = newCount % 3 === 0;
+    let anySelected = false;
     
     setPanelStates(prev => {
       const newStates = { ...prev };
-      selectedIndices.forEach(index => {
-        if (shouldClear) {
-          newStates[index] = { left: PANEL_STATES.NONE, right: PANEL_STATES.NONE };
-        } else {
-          newStates[index] = { left: newState, right: newState };
+      
+      panelsData.features.forEach((_, index) => {
+        if (isPanelInSelection(index, selStart, selEnd)) {
+          anySelected = true;
+          
+          const currentLeft = prev[index]?.left || PANEL_STATES.NONE;
+          const currentRight = prev[index]?.right || PANEL_STATES.NONE;
+          
+          let newLeft, newRight;
+          
+          if (unselect) {
+            // Right-click: Clear selection (set to NONE)
+            newLeft = PANEL_STATES.NONE;
+            newRight = PANEL_STATES.NONE;
+          } else {
+            // Left-click: NONE → MC4 → TERMINATED (cycle forward only)
+            if (currentLeft === PANEL_STATES.NONE) {
+              newLeft = PANEL_STATES.MC4_INSTALLED;
+            } else if (currentLeft === PANEL_STATES.MC4_INSTALLED) {
+              newLeft = PANEL_STATES.TERMINATED;
+            } else {
+              // Already TERMINATED, stay at TERMINATED
+              newLeft = PANEL_STATES.TERMINATED;
+            }
+            
+            if (currentRight === PANEL_STATES.NONE) {
+              newRight = PANEL_STATES.MC4_INSTALLED;
+            } else if (currentRight === PANEL_STATES.MC4_INSTALLED) {
+              newRight = PANEL_STATES.TERMINATED;
+            } else {
+              // Already TERMINATED, stay at TERMINATED
+              newRight = PANEL_STATES.TERMINATED;
+            }
+          }
+          
+          newStates[index] = { left: newLeft, right: newRight };
         }
       });
       
-      const newHistory = history.slice(0, historyIndex + 1);
-      newHistory.push(newStates);
-      setHistory(newHistory);
-      setHistoryIndex(newHistory.length - 1);
+      if (anySelected) {
+        const newHistory = history.slice(0, historyIndex + 1);
+        newHistory.push(newStates);
+        setHistory(newHistory);
+        setHistoryIndex(newHistory.length - 1);
+      }
       
       return newStates;
     });
-    
-    setSelectionCount(shouldClear ? 0 : newCount);
-  }, [panelsData, isPanelInSelection, selectionCount, history, historyIndex]);
+  }, [panelsData, isPanelInSelection, history, historyIndex]);
 
   // Updated Panel Click Handler
   const handlePanelClick = useCallback((e, index, side) => {
@@ -473,26 +619,60 @@ export default function App() {
 
   // Pan and selection handlers
   const handleMouseDown = useCallback((e) => {
-    // Only start selection if left-click (button 0) and not adding a note
-    if (e.button === 0 && !isAddingNote) {
-      // Check if clicking on background or direct SVG
-      if (e.target.tagName === 'svg' || e.target.classList.contains('background')) {
+    if (isAddingNote) {
+      // Note mode
+      if (e.button === 0) {
+        // Left-click in note mode: Store click position for potential note or selection box
         const coords = getSvgCoordsFromEvent(e);
         if (coords) {
-          setIsSelecting(true);
-          setSelectionStart(coords);
-          setSelectionEnd(coords);
+          // Store both SVG coords and original screen coords
+          const svg = svgRef.current;
+          const rect = svg.getBoundingClientRect();
+          setIsNoteSelecting(true);
+          setNoteSelectionStart({ 
+            ...coords, 
+            clientX: e.clientX, 
+            clientY: e.clientY,
+            screenX: e.clientX - rect.left,
+            screenY: e.clientY - rect.top
+          });
+          setNoteSelectionEnd(coords);
         }
+      } else if (e.button === 2) {
+        e.preventDefault(); // Prevent context menu
       }
-    } else if (e.button === 1) {
-      setIsPanning(true);
-      setPanStart({ x: e.clientX, y: e.clientY });
-      e.preventDefault();
+    } else {
+      // Normal mode
+      if ((e.button === 0 || e.button === 2) && !isAddingNote) {
+        // Allow selection on any SVG element (background, panels, etc.)
+        if (e.target.closest('svg')) {
+          const coords = getSvgCoordsFromEvent(e);
+          if (coords) {
+            setIsSelecting(true);
+            setSelectionStart(coords);
+            setSelectionEnd(coords);
+            setIsUnselectMode(e.button === 2); // Right-click = unselect mode
+            setClickedElement(e.target); // Track clicked element
+            if (e.button === 2) {
+              e.preventDefault(); // Prevent context menu
+            }
+          }
+        }
+      } else if (e.button === 1) {
+        setIsPanning(true);
+        setPanStart({ x: e.clientX, y: e.clientY });
+        e.preventDefault();
+      }
     }
-  }, [isAddingNote, getSvgCoordsFromEvent]);
+  }, [isAddingNote, viewBox, fromSvgCoords, getSvgCoordsFromEvent]);
 
   const handleMouseMove = useCallback((e) => {
-    if (isSelecting) {
+    if (isNoteSelecting) {
+      const coords = getSvgCoordsFromEvent(e);
+      if (coords) {
+        setNoteSelectionEnd(coords);
+      }
+    } else if (isSelecting) {
       const coords = getSvgCoordsFromEvent(e);
       if (coords) {
         setSelectionEnd(coords);
@@ -513,76 +693,124 @@ export default function App() {
       
       setPanStart({ x: e.clientX, y: e.clientY });
     }
-  }, [isSelecting, isPanning, panStart, viewBox, getSvgCoordsFromEvent]);
+  }, [isNoteSelecting, isSelecting, isPanning, panStart, viewBox, getSvgCoordsFromEvent]);
 
-  const handleMouseUp = useCallback(() => {
-    if (isSelecting && selectionStart && selectionEnd) {
+  const handleMouseUp = useCallback((e) => {
+    if (isNoteSelecting && noteSelectionStart && noteSelectionEnd) {
+      // Check if it was a click (not a drag) - add a note
+      const dx = Math.abs(noteSelectionEnd.x - noteSelectionStart.x);
+      const dy = Math.abs(noteSelectionEnd.y - noteSelectionStart.y);
+      const isClick = dx < 0.05 && dy < 0.05;
+      
+      if (isClick) {
+        // It was a click, add a note at the exact click position
+        // Store SVG coordinates directly for reliable positioning
+        const newNote = {
+          id: Date.now(),
+          svgX: noteSelectionStart.x,  // SVG/canvas coordinate
+          svgY: noteSelectionStart.y,  // SVG/canvas coordinate
+          text: ''
+        };
+        
+        setNotes(prev => [...prev, newNote]);
+        
+        // Reset selection state after click
+        setIsNoteSelecting(false);
+        setNoteSelectionStart(null);
+        setNoteSelectionEnd(null);
+      } else {
+        // It was a drag - highlight notes in selection box
+        const minX = Math.min(noteSelectionStart.x, noteSelectionEnd.x);
+        const maxX = Math.max(noteSelectionStart.x, noteSelectionEnd.x);
+        const minY = Math.min(noteSelectionStart.y, noteSelectionEnd.y);
+        const maxY = Math.max(noteSelectionStart.y, noteSelectionEnd.y);
+        
+        const selectedIds = new Set();
+        notes.forEach(note => {
+          if (note.svgX >= minX && note.svgX <= maxX && 
+              note.svgY >= minY && note.svgY <= maxY) {
+            selectedIds.add(note.id);
+          }
+        });
+        setSelectedNotes(selectedIds);
+      }
+    } else if (isSelecting && selectionStart && selectionEnd) {
+      // Check if selection box is too small (click instead of drag)
       const dx = Math.abs(selectionEnd.x - selectionStart.x);
       const dy = Math.abs(selectionEnd.y - selectionStart.y);
-      // Threshold to distinguish click from drag
-      if (dx > 5 || dy > 5) {
-        applySelection(selectionStart, selectionEnd);
+      const isClick = dx < 0.05 && dy < 0.05;
+      
+      if (isClick && clickedElement && clickedElement.dataset.panelIndex) {
+        // It was a click on a panel, trigger panel click logic
+        const panelIndex = parseInt(clickedElement.dataset.panelIndex);
+        
+        // Get panel ends to determine which side was clicked
+        const ends = getPanelEnds(panelIndex);
+        if (ends) {
+          // Use the click coordinates to determine side
+          const svg = svgRef.current;
+          if (svg) {
+            let point = svg.createSVGPoint();
+            point.x = selectionStart.x; // Use selection start as click position
+            point.y = selectionStart.y;
+            
+            const distLeft = Math.hypot(point.x - ends.left.x, point.y - ends.left.y);
+            const distRight = Math.hypot(point.x - ends.right.x, point.y - ends.right.y);
+            const side = distLeft < distRight ? 'left' : 'right';
+            
+            // Apply panel click logic
+            setPanelStates(prev => {
+              const currentState = prev[panelIndex]?.[side] || PANEL_STATES.NONE;
+              let newState;
+              
+              // Simple click cycle: NONE → MC4 → TERMINATED → NONE
+              if (currentState === PANEL_STATES.NONE) newState = PANEL_STATES.MC4_INSTALLED;
+              else if (currentState === PANEL_STATES.MC4_INSTALLED) newState = PANEL_STATES.TERMINATED;
+              else newState = PANEL_STATES.NONE;
+              
+              const newStates = {
+                ...prev,
+                [panelIndex]: { ...prev[panelIndex], [side]: newState }
+              };
+              
+              const currentHist = historyRef.current;
+              const curIdx = historyIndexRef.current;
+              const newHistory = currentHist.slice(0, curIdx + 1);
+              newHistory.push(newStates);
+              
+              setHistory(newHistory);
+              setHistoryIndex(newHistory.length - 1);
+              
+              return newStates;
+            });
+          }
+        }
+      } else {
+        // Apply selection
+        applySelection(selectionStart, selectionEnd, isUnselectMode);
       }
     }
+    setIsNoteSelecting(false);
     setIsSelecting(false);
+    // Don't reset note selection here if it's a drag (selection box visible)
     setSelectionStart(null);
     setSelectionEnd(null);
+    setIsUnselectMode(false);
+    setClickedElement(null);
     setIsPanning(false);
-  }, [isSelecting, selectionStart, selectionEnd, applySelection]);
+  }, [isNoteSelecting, noteSelectionStart, noteSelectionEnd, isSelecting, selectionStart, selectionEnd, applySelection, isUnselectMode, clickedElement, getPanelEnds, notes, toSvgCoords, viewBox, fromSvgCoords, setSelectedNotes]);
 
-  // SVG click (for adding notes) - Updated to not interfere with selection
-  const handleSvgClick = useCallback((e) => {
-    if (!isAddingNote) return;
-    
-    const svg = svgRef.current;
-    if (!svg) return;
-    
-    const rect = svg.getBoundingClientRect();
-    const screenX = e.clientX - rect.left;
-    const screenY = e.clientY - rect.top;
-    
-    const svgX = viewBox.x + (screenX / rect.width) * viewBox.width;
-    const svgY = viewBox.y + (screenY / rect.height) * viewBox.height;
-    
-    const { lng, lat } = fromSvgCoords(svgX, svgY);
-    
-    const newNote = {
-      id: Date.now(),
-      lng,
-      lat,
-      screenX,
-      screenY,
-      text: ''
-    };
-    
-    setNotes(prev => [...prev, newNote]);
-    setIsAddingNote(false);
-  }, [isAddingNote, viewBox, fromSvgCoords]);
-
-  // Not güncelle
+  // Update note
   const updateNote = useCallback((id, text) => {
     setNotes(prev => prev.map(n => n.id === id ? { ...n, text } : n));
   }, []);
 
-  // Not sil
+  // Delete note
   const deleteNote = useCallback((id) => {
     setNotes(prev => prev.filter(n => n.id !== id));
   }, []);
 
-  // Not konumlarını güncelle
-  useEffect(() => {
-    const svg = svgRef.current;
-    if (!svg || notes.length === 0) return;
-    
-    const rect = svg.getBoundingClientRect();
-    
-    setNotes(prev => prev.map(note => {
-      const { x, y } = toSvgCoords(note.lng, note.lat);
-      const screenX = ((x - viewBox.x) / viewBox.width) * rect.width;
-      const screenY = ((y - viewBox.y) / viewBox.height) * rect.height;
-      return { ...note, screenX, screenY };
-    }));
-  }, [viewBox, toSvgCoords]);
+  // Note: Notes now use SVG coordinates directly, no position recalculation needed
 
   // Undo
   const undo = useCallback(() => {
@@ -644,11 +872,23 @@ export default function App() {
         e.preventDefault();
         zoom(false);
       }
+      // Delete key in note mode: delete selected notes
+      if (e.key === 'Delete' && isAddingNote) {
+        if (selectedNotes.size > 0) {
+          // Delete selected notes
+          setNotes(prev => prev.filter(note => !selectedNotes.has(note.id)));
+          setSelectedNotes(new Set());
+        }
+        // Reset selection box after deletion
+        setIsNoteSelecting(false);
+        setNoteSelectionStart(null);
+        setNoteSelectionEnd(null);
+      }
     };
     
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [undo, redo, zoom]);
+  }, [undo, redo, zoom, isAddingNote, selectedNotes]);
 
   // Native wheel listener
   useEffect(() => {
@@ -690,6 +930,11 @@ export default function App() {
 
   return (
     <div className="app">
+      {isAddingNote && (
+        <div className="note-mode-bar">
+          📝 Note Mode: Click to add note, Drag to select, Delete to remove
+        </div>
+      )}
       <div className="top-panel">
         <div className="counters">
           <div className="counter-row">
@@ -709,11 +954,29 @@ export default function App() {
         <div className="toolbar">
           <button 
             className={`tool-btn ${isAddingNote ? 'active' : ''}`}
-            onClick={() => setIsAddingNote(!isAddingNote)}
-            title="Add Note"
+            onClick={() => {
+              setIsAddingNote(!isAddingNote);
+              setSelectedNotes(new Set());
+              setIsNoteSelecting(false);
+              setNoteSelectionStart(null);
+              setNoteSelectionEnd(null);
+            }}
+            title="Toggle Note Mode"
           >
             📝
           </button>
+          {isAddingNote && selectedNotes.size > 0 && (
+            <button 
+              className="tool-btn"
+              onClick={() => {
+                setNotes(prev => prev.filter(note => !selectedNotes.has(note.id)));
+                setSelectedNotes(new Set());
+              }}
+              title="Delete Selected Notes"
+            >
+              🗑️
+            </button>
+          )}
           <button 
             className="tool-btn"
             onClick={undo}
@@ -742,7 +1005,7 @@ export default function App() {
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
-          onClick={handleSvgClick}
+          onContextMenu={(e) => e.preventDefault()}
         >
           <rect
             className="background"
@@ -763,60 +1026,76 @@ export default function App() {
               index={index} 
               feature={feature} 
               state={panelStates[index]} 
-              toSvgCoords={toSvgCoords} 
-              onClick={handlePanelClick}
+              toSvgCoords={toSvgCoords}
+            />
+          ))}
+          
+          {/* Selection box rendered INSIDE SVG for accurate coordinate matching */}
+          {/* Blue = select (left-click), Red = unselect (right-click) */}
+          {isSelecting && selectionStart && selectionEnd && (
+            <rect
+              x={Math.min(selectionStart.x, selectionEnd.x)}
+              y={Math.min(selectionStart.y, selectionEnd.y)}
+              width={Math.abs(selectionEnd.x - selectionStart.x)}
+              height={Math.abs(selectionEnd.y - selectionStart.y)}
+              fill={isUnselectMode ? "rgba(231, 76, 60, 0.15)" : "rgba(52, 152, 219, 0.15)"}
+              stroke={isUnselectMode ? "#e74c3c" : "#3498db"}
+              strokeWidth={Math.max(0.5, viewBox.width / 500)}
+              strokeDasharray={`${viewBox.width / 200},${viewBox.width / 400}`}
+              pointerEvents="none"
+            />
+          )}
+          
+          {/* Note selection box (purple) */}
+          {isNoteSelecting && noteSelectionStart && noteSelectionEnd && (
+            <rect
+              x={Math.min(noteSelectionStart.x, noteSelectionEnd.x)}
+              y={Math.min(noteSelectionStart.y, noteSelectionEnd.y)}
+              width={Math.abs(noteSelectionEnd.x - noteSelectionStart.x)}
+              height={Math.abs(noteSelectionEnd.y - noteSelectionStart.y)}
+              fill="rgba(155, 89, 182, 0.15)"
+              stroke="#9b59b6"
+              strokeWidth={Math.max(0.5, viewBox.width / 500)}
+              strokeDasharray={`${viewBox.width / 200},${viewBox.width / 400}`}
+              pointerEvents="none"
+            />
+          )}
+          
+          {/* Note markers rendered inside SVG */}
+          {notes.map(note => (
+            <SvgNoteMarker
+              key={note.id}
+              note={note}
+              isSelected={selectedNotes.has(note.id)}
+              viewBoxWidth={viewBox.width}
+              onClick={(clickedNote) => setEditingNote(clickedNote)}
             />
           ))}
         </svg>
         
-        {isSelecting && selectionStart && selectionEnd && (() => {
-          // Calculate selection box in SCREEN coordinates for rendering the div
-          const startScreen = canvasToScreen(selectionStart.x, selectionStart.y);
-          const endScreen = canvasToScreen(selectionEnd.x, selectionEnd.y);
+        {/* Note editor as HTML overlay */}
+        {editingNote && (() => {
           const svg = svgRef.current;
           if (!svg) return null;
           const rect = svg.getBoundingClientRect();
-          
-          const left = Math.min(startScreen.x, endScreen.x) - rect.left;
-          const top = Math.min(startScreen.y, endScreen.y) - rect.top;
-          const width = Math.abs(endScreen.x - startScreen.x);
-          const height = Math.abs(endScreen.y - startScreen.y);
-          
+          const screenX = ((editingNote.svgX - viewBox.x) / viewBox.width) * rect.width;
+          const screenY = ((editingNote.svgY - viewBox.y) / viewBox.height) * rect.height;
           return (
-            <div
-              style={{
-                position: 'absolute',
-                left: `${left}px`,
-                top: `${top}px`,
-                width: `${width}px`,
-                height: `${height}px`,
-                backgroundColor: 'rgba(52, 152, 219, 0.15)',
-                border: '1px solid #3498db',
-                borderStyle: 'dashed',
-                pointerEvents: 'none',
-                zIndex: 10
+            <NoteEditor
+              note={editingNote}
+              onUpdate={updateNote}
+              onDelete={(id) => {
+                deleteNote(id);
+                setEditingNote(null);
               }}
+              onClose={() => setEditingNote(null)}
+              screenX={screenX}
+              screenY={screenY}
             />
           );
         })()}
-        
-        {notes.map(note => (
-          <Note
-            key={note.id}
-            note={note}
-            onUpdate={updateNote}
-            onDelete={deleteNote}
-            scale={viewBox.width / 1200}
-          />
-        ))}
       </div>
       
-      {isAddingNote && (
-        <div className="status-bar">
-          Click the map to add a note. Click the button again to cancel.
-        </div>
-      )}
-
       <div className="legend">
         <div className="legend-item">
           <span className="legend-dot mc4"></span>
