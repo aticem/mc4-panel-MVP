@@ -1,5 +1,12 @@
-import React, { useState, useEffect, useCallback, useRef, memo } from 'react';
+import React, { useState, useEffect, useCallback, useRef, memo, useMemo } from 'react';
 import './App.css';
+
+// Import custom hooks and components
+import useDailyLog from './hooks/useDailyLog';
+import useChartExport from './hooks/useChartExport';
+import SubmitModal from './components/SubmitModal';
+import ProgressStats from './components/ProgressStats';
+import HistoryModal from './components/HistoryModal';
 
 // Panel states: null (none), 'mc4' (blue - installed), 'terminated' (green - string terminated)
 const PANEL_STATES = {
@@ -8,9 +15,15 @@ const PANEL_STATES = {
   TERMINATED: 'terminated'
 };
 
-// SVG Note Marker component - renders inside SVG
-function SvgNoteMarker({ note, isSelected, viewBoxWidth, onClick }) {
-  const radius = Math.max(3, viewBoxWidth / 300);
+// SVG Note Marker component - renders inside SVG (optimized - no filters)
+const SvgNoteMarker = memo(({ note, isSelected, viewBoxWidth, onClick }) => {
+  // Calculate zoom level: higher zoom = smaller viewBox width
+  // Base canvas width is ~1200, so zoom factor = 1200 / viewBoxWidth
+  const zoomFactor = 1200 / viewBoxWidth;
+  
+  // Scale radius based on zoom: zoom in = smaller radius
+  const baseRadius = 4; // Base radius at normal zoom
+  const radius = Math.max(1.5, baseRadius / Math.sqrt(zoomFactor));
   const innerRadius = radius * 0.4;
   
   return (
@@ -28,9 +41,6 @@ function SvgNoteMarker({ note, isSelected, viewBoxWidth, onClick }) {
         fill={isSelected ? '#9b59b6' : '#e74c3c'}
         stroke={isSelected ? '#8e44ad' : '#c0392b'}
         strokeWidth={isSelected ? radius * 0.3 : radius * 0.15}
-        style={{
-          filter: isSelected ? 'drop-shadow(0 0 4px rgba(155, 89, 182, 0.8))' : 'drop-shadow(0 1px 2px rgba(0,0,0,0.3))'
-        }}
       />
       <circle
         cx={note.svgX}
@@ -41,7 +51,7 @@ function SvgNoteMarker({ note, isSelected, viewBoxWidth, onClick }) {
       />
     </g>
   );
-}
+});
 
 // Note Editor component - HTML overlay for editing
 function NoteEditor({ note, onUpdate, onDelete, onClose, screenX, screenY }) {
@@ -82,8 +92,8 @@ function NoteEditor({ note, onUpdate, onDelete, onClose, screenX, screenY }) {
         placeholder="Write a note..."
       />
       <div className="note-actions">
-        <button onClick={handleSave}>✓</button>
-        <button onClick={() => onDelete(note.id)}>🗑</button>
+        <button onClick={handleSave}>Save</button>
+        <button onClick={() => onDelete(note.id)}>Delete</button>
         <button onClick={() => { setText(note.text); onClose(); }}>✕</button>
       </div>
     </div>
@@ -94,6 +104,9 @@ function NoteEditor({ note, onUpdate, onDelete, onClose, screenX, screenY }) {
 const Panel = memo(({ feature, index, state, toSvgCoords }) => {
   const coords = feature.geometry.coordinates;
   if (!coords || coords.length < 2) return null;
+  
+  const [isHovered, setIsHovered] = useState(false);
+  const text = feature.properties.text;
   
   // 1. Convert to SVG points
   const uniqueCoords = (coords.length > 0 && 
@@ -152,16 +165,38 @@ const Panel = memo(({ feature, index, state, toSvgCoords }) => {
   const currentState = state || {};
   
   return (
-    <g className="panel-group">
+    <g 
+      className="panel-group"
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
       {/* Main panel shape */}
       <polygon
         points={pointsStr}
-        fill="rgba(0,0,0,0.03)"
-        stroke="#222"
-        strokeWidth={0.15}
+        fill={isHovered ? "rgba(71, 85, 105, 0.12)" : "rgba(71, 85, 105, 0.05)"}
+        stroke={isHovered ? "#334155" : "#64748b"}
+        strokeWidth={isHovered ? 0.4 : 0.25}
         style={{ cursor: 'default' }}
         data-panel-index={index}
       />
+      
+      {/* Text Label on Hover */}
+      {isHovered && text && (
+        <text
+          x={center.x}
+          y={center.y}
+          textAnchor="middle"
+          dominantBaseline="middle"
+          fontSize="1.5"
+          fill="#1e293b"
+          fontFamily="'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
+          fontWeight="600"
+          pointerEvents="none"
+          style={{ textShadow: '0 0 2px #f8fafc, 0 0 4px #f8fafc' }}
+        >
+          {text}
+        </text>
+      )}
       
       {/* Left Indicator */}
       {currentState.left && (
@@ -215,18 +250,89 @@ const Boundary = memo(({ feature, toSvgCoords }) => {
     <polyline
       points={points}
       fill="none"
-      stroke="#111"
-      strokeWidth={0.25}
-      strokeDasharray="4,2"
-      opacity={0.55}
+      stroke="#475569"
+      strokeWidth={0.5}
+      strokeDasharray="8,4"
+      opacity={0.8}
     />
   );
-});
+}, (prevProps, nextProps) => prevProps.feature === nextProps.feature);
+
+const InvPoint = memo(({ feature, toSvgCoords }) => {
+  const coords = feature.geometry.coordinates;
+  if (!coords || coords.length < 3) return null;
+  
+  // Calculate bounding box of the LineString
+  const svgCoords = coords.map(c => toSvgCoords(c[0], c[1]));
+  const xs = svgCoords.map(p => p.x);
+  const ys = svgCoords.map(p => p.y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  
+  return (
+    <rect
+      x={minX}
+      y={minY}
+      width={maxX - minX}
+      height={maxY - minY}
+      fill="#f59e0b"
+      stroke="#d97706"
+      strokeWidth={0.3}
+      opacity={0.85}
+    />
+  );
+}, (prevProps, nextProps) => prevProps.feature === nextProps.feature);
+
+const TextLabel = memo(({ feature, toSvgCoords }) => {
+  const coords = feature.geometry.coordinates;
+  const text = feature.properties?.text;
+  if (!coords || !text) return null;
+  
+  const { x, y } = toSvgCoords(coords[0], coords[1]);
+  
+  return (
+    <text
+      x={x}
+      y={y}
+      textAnchor="middle"
+      dominantBaseline="middle"
+      fontSize="1.2"
+      fill="#334155"
+      fontFamily="'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
+      fontWeight="500"
+      pointerEvents="none"
+      opacity="0.75"
+      style={{
+        transition: 'opacity 0.2s ease',
+      }}
+      onMouseEnter={(e) => {
+        e.target.style.opacity = '1';
+      }}
+      onMouseLeave={(e) => {
+        e.target.style.opacity = '0.75';
+      }}
+    >
+      {text}
+    </text>
+  );
+}, (prevProps, nextProps) => prevProps.feature === nextProps.feature);
 
 export default function App() {
+  // Custom hooks for daily log and export
+  const { dailyLog, addRecord, resetLog } = useDailyLog();
+  const { exportToExcel } = useChartExport();
+  
+  // Submit modal state
+  const [isSubmitModalOpen, setIsSubmitModalOpen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  
   // GeoJSON verileri
   const [panelsData, setPanelsData] = useState(null);
   const [lineData, setLineData] = useState(null);
+  const [invPointData, setInvPointData] = useState(null);
+  const [textData, setTextData] = useState(null);
   
   // Panel durumları: { panelIndex: { left: state, right: state } }
   const [panelStates, setPanelStates] = useState({});
@@ -279,10 +385,52 @@ export default function App() {
   useEffect(() => {
     Promise.all([
       fetch('/panels.geojson').then(r => r.json()),
-      fetch('/line.geojson').then(r => r.json())
-    ]).then(([panels, line]) => {
+      fetch('/line.geojson').then(r => r.json()),
+      fetch('/inv point.geojson').then(r => r.json()),
+      fetch('/text.geojson').then(r => r.json())
+    ]).then(([panels, line, invPoint, text]) => {
+      // Spatial join: Match text to panels
+      const textPoints = text.features.map(t => ({
+        text: t.properties.text,
+        coord: t.geometry.coordinates
+      }));
+      
+      panels.features.forEach(panel => {
+        const poly = panel.geometry.coordinates;
+        // Calculate bbox
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        poly.forEach(p => {
+          if (p[0] < minX) minX = p[0];
+          if (p[0] > maxX) maxX = p[0];
+          if (p[1] < minY) minY = p[1];
+          if (p[1] > maxY) maxY = p[1];
+        });
+        
+        // Find text inside
+        const matchingText = textPoints.find(t => {
+          const tx = t.coord[0], ty = t.coord[1];
+          if (tx < minX || tx > maxX || ty < minY || ty > maxY) return false;
+          
+          let inside = false;
+          for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+            const xi = poly[i][0], yi = poly[i][1];
+            const xj = poly[j][0], yj = poly[j][1];
+            const intersect = ((yi > ty) !== (yj > ty)) &&
+              (tx < (xj - xi) * (ty - yi) / (yj - yi + 1e-9) + xi);
+            if (intersect) inside = !inside;
+          }
+          return inside;
+        });
+        
+        if (matchingText) {
+          panel.properties.text = matchingText.text;
+        }
+      });
+
       setPanelsData(panels);
       setLineData(line);
+      setInvPointData(invPoint);
+      setTextData(text);
       
       // Bounds hesapla
       const allCoords = [];
@@ -294,6 +442,16 @@ export default function App() {
       line.features.forEach(f => {
         if (f.geometry.coordinates) {
           f.geometry.coordinates.forEach(c => allCoords.push(c));
+        }
+      });
+      invPoint.features.forEach(f => {
+        if (f.geometry.coordinates) {
+          f.geometry.coordinates.forEach(c => allCoords.push(c));
+        }
+      });
+      text.features.forEach(f => {
+        if (f.geometry.coordinates) {
+          allCoords.push(f.geometry.coordinates);
         }
       });
       
@@ -339,22 +497,19 @@ export default function App() {
     return { lng, lat };
   }, [canvasSize.width, canvasSize.height]);
 
-  // Compute counters
+  // Compute counters with useMemo for better performance
   // MC4: Counts both MC4_INSTALLED and TERMINATED (because terminated means MC4 was done first)
   // Termination: Only counts TERMINATED
-  const counts = useCallback(() => {
+  const { mc4, termination } = useMemo(() => {
     const totalPanels = panelsData ? panelsData.features.length : 0;
-    const totalEnds = totalPanels * 2; // Her panelin 2 ucu var
+    const totalEnds = totalPanels * 2;
     
     let mc4Completed = 0;
     let terminatedCompleted = 0;
     
     Object.values(panelStates).forEach(state => {
-      // MC4: Count if MC4_INSTALLED OR TERMINATED (terminated implies MC4 was done)
       if (state.left === PANEL_STATES.MC4_INSTALLED || state.left === PANEL_STATES.TERMINATED) mc4Completed++;
       if (state.right === PANEL_STATES.MC4_INSTALLED || state.right === PANEL_STATES.TERMINATED) mc4Completed++;
-      
-      // Terminated: Only count TERMINATED
       if (state.left === PANEL_STATES.TERMINATED) terminatedCompleted++;
       if (state.right === PANEL_STATES.TERMINATED) terminatedCompleted++;
     });
@@ -659,6 +814,7 @@ export default function App() {
           }
         }
       } else if (e.button === 1) {
+        // Middle mouse button for panning
         setIsPanning(true);
         setPanStart({ x: e.clientX, y: e.clientY });
         e.preventDefault();
@@ -703,21 +859,33 @@ export default function App() {
       const isClick = dx < 0.05 && dy < 0.05;
       
       if (isClick) {
-        // It was a click, add a note at the exact click position
-        // Store SVG coordinates directly for reliable positioning
-        const newNote = {
-          id: Date.now(),
-          svgX: noteSelectionStart.x,  // SVG/canvas coordinate
-          svgY: noteSelectionStart.y,  // SVG/canvas coordinate
-          text: ''
-        };
+        // Check if there's already a note at this position (within a small radius)
+        const clickRadius = 5; // pixels
+        const existingNote = notes.find(note => {
+          const distance = Math.hypot(note.svgX - noteSelectionStart.x, note.svgY - noteSelectionStart.y);
+          return distance < clickRadius;
+        });
         
-        setNotes(prev => [...prev, newNote]);
-        
-        // Reset selection state after click
-        setIsNoteSelecting(false);
-        setNoteSelectionStart(null);
-        setNoteSelectionEnd(null);
+        if (existingNote) {
+          // There's already a note here, open the editor instead of adding a new one
+          setEditingNote(existingNote);
+        } else {
+          // No existing note, add a new one at the exact click position
+          // Store SVG coordinates directly for reliable positioning
+          const newNote = {
+            id: Date.now(),
+            svgX: noteSelectionStart.x,  // SVG/canvas coordinate
+            svgY: noteSelectionStart.y,  // SVG/canvas coordinate
+            text: ''
+          };
+          
+          setNotes(prev => [...prev, newNote]);
+          
+          // Reset selection state after click
+          setIsNoteSelecting(false);
+          setNoteSelectionStart(null);
+          setNoteSelectionEnd(null);
+        }
       } else {
         // It was a drag - highlight notes in selection box
         const minX = Math.min(noteSelectionStart.x, noteSelectionEnd.x);
@@ -922,36 +1090,40 @@ export default function App() {
     return () => svg.removeEventListener('wheel', wheelHandler);
   }, [panelsData]);
 
-  const { mc4, termination } = counts();
-
   if (!panelsData || !lineData) {
     return <div className="loading">Loading...</div>;
   }
 
   return (
     <div className="app">
-      {isAddingNote && (
-        <div className="note-mode-bar">
-          📝 Note Mode: Click to add note, Drag to select, Delete to remove
-        </div>
-      )}
       <div className="top-panel">
-        <div className="counters">
-          <div className="counter-row">
-            <span className="counter-label">MC4 Install:</span>
-            <span className="counter-item">Total: <strong>{mc4.total}</strong></span>
-            <span className="counter-item completed">Done: <strong>{mc4.completed}</strong></span>
-            <span className="counter-item remaining">Remaining: <strong>{mc4.remaining}</strong></span>
-          </div>
-          <div className="counter-row">
-            <span className="counter-label">Cable Termination:</span>
-            <span className="counter-item">Total: <strong>{termination.total}</strong></span>
-            <span className="counter-item completed">Done: <strong>{termination.completed}</strong></span>
-            <span className="counter-item remaining">Remaining: <strong>{termination.remaining}</strong></span>
-          </div>
-        </div>
+        <ProgressStats mc4={mc4} termination={termination} dailyLog={dailyLog} />
         
         <div className="toolbar">
+          <button 
+            className="tool-btn"
+            onClick={() => setIsSubmitModalOpen(true)}
+            title="Submit Daily Work"
+          >
+            📋
+          </button>
+          <button 
+            className="tool-btn"
+            onClick={() => setIsHistoryOpen(true)}
+            title="View Submission History"
+            disabled={dailyLog.length === 0}
+          >
+            🗒️
+          </button>
+          <button 
+            className="tool-btn"
+            onClick={() => exportToExcel(dailyLog)}
+            disabled={dailyLog.length === 0}
+            title="Export to Excel"
+          >
+            📊
+          </button>
+          <div className="toolbar-divider"></div>
           <button 
             className={`tool-btn ${isAddingNote ? 'active' : ''}`}
             onClick={() => {
@@ -996,6 +1168,32 @@ export default function App() {
         </div>
       </div>
       
+      {isAddingNote && (
+        <div className="note-mode-bar note-mode-below-legend">
+          📝 Note Mode: Click to add, drag to select, press Delete to remove
+        </div>
+      )}
+      
+      {/* Submit Modal */}
+      <SubmitModal
+        isOpen={isSubmitModalOpen}
+        onClose={() => setIsSubmitModalOpen(false)}
+        onSubmit={addRecord}
+        dailyInstalled={mc4.completed}
+      />
+
+      <HistoryModal
+        isOpen={isHistoryOpen}
+        onClose={() => setIsHistoryOpen(false)}
+        dailyLog={dailyLog}
+      />
+      
+      {isAddingNote && (
+        <div className="note-mode-bar note-mode-below-legend">
+          📝 Note Mode: Click to add, drag to select, press Delete to remove
+        </div>
+      )}
+      
       <div className="map-container">
         <svg
           ref={svgRef}
@@ -1013,11 +1211,15 @@ export default function App() {
             y={viewBox.y - 1000}
             width={viewBox.width + 2000}
             height={viewBox.height + 2000}
-            fill="#f7f7f7"
+            fill="#f8fafc"
           />
           
           {lineData.features.map((feature, index) => (
             <Boundary key={index} feature={feature} toSvgCoords={toSvgCoords} />
+          ))}
+          
+          {invPointData && invPointData.features.map((feature, index) => (
+            <InvPoint key={index} feature={feature} toSvgCoords={toSvgCoords} />
           ))}
           
           {panelsData.features.map((feature, index) => (
@@ -1028,6 +1230,11 @@ export default function App() {
               state={panelStates[index]} 
               toSvgCoords={toSvgCoords}
             />
+          ))}
+          
+          {textData && textData.features.map((feature, index) => (
+            // Text labels are now handled inside Panel component on hover
+            null
           ))}
           
           {/* Selection box rendered INSIDE SVG for accurate coordinate matching */}
